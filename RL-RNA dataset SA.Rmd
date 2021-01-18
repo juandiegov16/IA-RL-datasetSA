@@ -4,9 +4,10 @@ output: html_notebook
 pdf_document: default
 ---
 
-```{r}
-#Importando librerías requeridas
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
 library(broom)
 library(ggthemes)
 library(caret)
@@ -19,8 +20,282 @@ library(rpart.plot)
 library(rattle)
 library(dplyr)
 library(nnet)
+library(reticulate)
+use_condaenv("py3.8", required = TRUE)
+py_config()
+library(CatEncoders)
+library(varhandle)
+library(tidyverse)
+library(regclass)
 ```
 Importación del dataset
 ```{r}
 datasetSA <- read.csv("./datasetSA.csv")
+head(datasetSA)
 ```
+Etiquetado de columnas
+```{r}
+colnames(datasetSA) <- c('presionArterialSistolica','tabacoAcumulado','LDL','adiposidad','historialFamiliar','compTip A','obesidad','consumoAlcohol','edad','enfCard')
+head(datasetSA)
+```
+Para ver un resumen de cómo se encuentra el dataset actualmente:
+```{r}
+str(datasetSA)
+```
+Para transformar los 2/1 a 1/0:
+
+
+```{r}
+datasetSA$historialFamiliar <- datasetSA$historialFamiliar - 1
+datasetSA$enfCard <- datasetSA$enfCard -1
+```
+
+Para escalar la presión arterial sistólica de 0 a 100:
+```{r}
+datasetSA$presionArterialSistolica<- scales::rescale(datasetSA$presionArterialSistolica, to=c(0,100))
+```
+Ahora un par de factores a columnas que nos sirven para contar las variables binarias.
+```{r}
+head(datasetSA)
+sum(is.na(datasetSA))
+datasetSA$historialFamiliar<- as.factor(datasetSA$historialFamiliar)
+levels(datasetSA$historialFamiliar)[levels(datasetSA$historialFamiliar)==0] <- "No tiene historial familiar"
+levels(datasetSA$historialFamiliar)[levels(datasetSA$historialFamiliar)==1] <- "Tiene historial familiar"
+
+datasetSA$enfCard<-as.factor(datasetSA$enfCard)
+levels(datasetSA$enfCard)[levels(datasetSA$enfCard)==0] <- "No enfermo"
+levels(datasetSA$enfCard)[levels(datasetSA$enfCard)==1]<- "Enfermo"
+
+datasetSA$obesidad[datasetSA$obesidad < 30] <- 0
+datasetSA$obesidad[datasetSA$obesidad >= 30] <- 1
+
+datasetSA$obesidad<-as.factor(datasetSA$obesidad)
+levels(datasetSA$obesidad)[levels(datasetSA$obesidad)==0] <- "No obeso"
+levels(datasetSA$obesidad)[levels(datasetSA$obesidad)==1] <- "Obeso"
+
+
+str(datasetSA)
+summary(datasetSA)
+```
+Siguiente paso: visualizaciones.
+1 - Número total de observaciones de gente no enferma y gente con enfermedad cardíaca.
+```{r}
+ggplot(datasetSA,aes(enfCard, fill=enfCard)) +
+geom_bar(stat="count") + theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B"))
+
+```
+2 - Enfermedad cardíaca entre aquellos con historial familiar
+
+```{r}
+ggplot(datasetSA,aes(enfCard, fill=enfCard)) +
+geom_bar(stat="count")+ facet_wrap(~historialFamiliar, ncol=2,scale="fixed")+ theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B"))
+
+```
+3 - Enfermedad cardíaca entre aquellos con obesidad
+
+```{r}
+ggplot(datasetSA,aes(enfCard, fill=enfCard)) +
+geom_bar(stat="count")+ facet_wrap(~obesidad, ncol=2,scale="fixed")+ theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B"))
+
+ggsave("SA-obesidad-vs-enfCard.png")
+```
+4- Diferencias en presión arterial sistólica entre pacientes enfermos y no enfermos.
+```{r}
+ggplot(datasetSA,aes(presionArterialSistolica, fill=enfCard)) +
+geom_histogram(aes(y=..density..),breaks=seq(0, 100, by=10), color="grey17") +
+geom_density(alpha=.1, fill="black") +
+facet_wrap(~enfCard, ncol=1,scale="fixed") +
+theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B")) +
+xlab("Presión Arterial Sistólica") +
+ylab("Densidad / Conteo") +
+ggtitle("Histograma - Presión Arterial Sistólica")
+ggsave("SA-hist-presionArterialSistolica.png")
+```
+
+
+5- Presencia de enfermedad cardíaca según edad
+
+```{r}
+ggplot(datasetSA,aes(edad, fill=enfCard)) +
+geom_histogram(aes(y=..density..),breaks=seq(15, 65, by=5), color="grey17") +
+geom_density(alpha=.1, fill="black")+ facet_wrap(~enfCard, ncol=1,scale="fixed") +
+theme_clean() + scale_fill_manual(values=c("#97BE11","#DC1E0B"))+ xlab("Edad") +
+ylab("Densidad / Conteo") +
+ggtitle("Histograma - Edad")
+ggsave("SA-hist-edad.png")
+```
+6 - Diagrama de caja (Edad)
+```{r}
+ggplot(datasetSA,aes(x=enfCard, y=edad, fill=enfCard)) +
+geom_boxplot() +
+theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B"))
+ggsave("SA-boxplot-edad.png")
+
+```
+7 - Colesterol vs enfCard
+```{r}
+ggplot(datasetSA,aes(LDL, fill=enfCard)) +
+geom_histogram(aes(y=..density..),breaks=seq(0, 16, by=1), color="grey17") +
+geom_density(alpha=.1, fill="black") +
+facet_wrap(~enfCard, ncol=1,scale="fixed") +
+theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B")) +
+xlab("Colesterol LDL en mg/dl") +
+ylab("Densidad / Conteo") +
+ggtitle("Histograma - Colesterol LDL")
+ggsave("SA-hist-LDL.png")
+```
+8 - Adiposidad vs enfCard
+```{r}
+ggplot(datasetSA,aes(adiposidad, fill=enfCard)) +
+geom_histogram(aes(y=..density..),breaks=seq(5, 45, by=5), color="grey17") +
+geom_density(alpha=.1, fill="black") +
+facet_wrap(~enfCard, ncol=1,scale="fixed") +
+theme_clean() +
+scale_fill_manual(values=c("#97BE11","#DC1E0B")) +
+xlab("Adiposidad") +
+ylab("Densidad / Conteo") +
+ggtitle("Histograma - Adiposidad")
+ggsave("SA-hist-adiposidad.png")
+```
+
+9 - Tabaco acumulado vs enfCard
+```{r}
+ggplot(datasetSA,aes(tabacoAcumulado, fill=enfCard)) +
+geom_histogram(aes(y=..density..),breaks=seq(0, 32, by=4), color="grey17") +
+geom_density(alpha=.1, fill="black")+ facet_wrap(~enfCard, ncol=1,scale="fixed") +
+theme_clean() + scale_fill_manual(values=c("#97BE11","#DC1E0B"))+ xlab("Tabaco Acumulado (Kg)") +
+ylab("Densidad / Conteo") +
+ggtitle("Histograma - Tabaco Acumulado")
+ggsave("SA-hist-tabacoAcumulado.png")
+```
+Sacaremos un dataframe con las variables significativas
+
+```{r}
+d <- datasetSA[,c(2,3,4,7,9,10)] 
+summary(d)
+```
+Iniciamos la regresión logística
+```{r}
+log <- glm(enfCard~., data=d, family=binomial)
+summary(log)
+
+```
+Pruebas indican que a mayor edad y tabaco acumulado, mayor la posibilidad de enfermedad cardíaca.
+
+```{r}
+log.df <- tidy(log)
+```
+
+```{r}
+log.df %>%
+mutate(term=reorder(term,estimate)) %>%
+ggplot( aes(term,estimate, fill=estimate)) +
+geom_bar(stat="identity") +
+scale_fill_gradient(low = "#97BE11",high = "#DC1E0B") +
+theme_clean() +
+geom_hline(yintercept=0) +
+coord_flip()
+
+ggsave("SA-variables-orden-imp.png")
+
+```
+
+```{r}
+data<-d
+set.seed(1237)
+train <- sample(nrow(data), .8*nrow(data), replace = FALSE)
+TrainingSet <- data[train,]
+ValidSet <- data[-train,]
+
+#Parámetros
+fitControl <- trainControl(method = "repeatedcv",
+                            number = 10,
+                            repeats = 10,
+                            classProbs = TRUE,
+                            summaryFunction = twoClassSummary)
+
+TrainingSet$enfCard<-make.names(TrainingSet$enfCard)
+set.seed(142)
+TrainingSet$enfCard<-as.factor(TrainingSet$enfCard)
+
+
+gbm.ada.1 <- caret::train(enfCard ~ .,
+                          data = TrainingSet ,
+                          method = "glm",
+                          trControl = fitControl,
+                          metric="ROC")
+
+gbm.ada.1
+
+```
+```{r}
+varImp(gbm.ada.1)
+```
+```{r}
+pred <- predict(gbm.ada.1,ValidSet)
+levels(pred)[2] <- "No enfermo"
+t<-table(pred, ValidSet$enfCard)
+t.df<-as.data.frame(t)
+res<-caret::confusionMatrix(pred, ValidSet$enfCard, positive = "Enfermo")
+res
+```
+```{r}
+ggplot(data = t.df, aes(x = Var2, y = pred, label=Freq)) +
+geom_tile(aes(fill = Freq)) +
+scale_fill_gradient(low="#97BE11",high="#DC1E0B") +
+theme_clean() +
+xlab("Enfermedad Cardíaca - Real") +
+ylab("Enfermedad Cardíaca - Predicción") +
+geom_text(size=8) +
+ggtitle("Dataset SA - Regresión Logística")
+ggsave("SA-RL-cf-matrix.png")
+```
+
+Listo nuestro trabajo con la regresión logística. Ahora, a por la red neural.
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+number = 10,
+repeats = 10,
+classProbs = TRUE,
+summaryFunction = twoClassSummary)
+gbm.ada.1 <- caret::train(enfCard ~ .,
+data = TrainingSet ,
+method = "nnet",
+trControl = fitControl,
+metric="ROC")
+```
+```{r}
+gbm.ada.1
+```
+
+```{r}
+varImp(gbm.ada.1)
+```
+```{r}
+pred <- predict(gbm.ada.1,ValidSet)
+levels(pred)[2] <- "No enfermo"
+t<-table(pred, ValidSet$enfCard)
+t.df<-as.data.frame(t)
+res<-caret::confusionMatrix(pred, ValidSet$enfCard, positive = "Enfermo")
+res
+```
+
+```{r}
+ggplot(data = t.df, aes(x = Var2, y = pred, label=Freq)) +
+geom_tile(aes(fill = Freq)) +
+scale_fill_gradient(low="#97BE11",high="#DC1E0B") +
+theme_clean() +
+xlab("Enfermedad Cardíaca - Real") +
+ylab("Enfermedad Cardíaca - Predicción") +
+geom_text(size=8) +
+ggtitle("Dataset SA - Red Neuronal Artificial")
+ggsave("SA-RNA-cf-matrix.png")
+```
+
