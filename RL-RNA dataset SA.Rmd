@@ -1,0 +1,26 @@
+---
+title: "RL-RNA dataset SA"
+output: html_notebook
+pdf_document: default
+---
+
+```{r}
+#Importando librerías requeridas
+knitr::opts_chunk$set(echo = TRUE)
+library(broom)
+library(ggthemes)
+library(caret)
+library(bindrcpp)
+library(RColorBrewer)
+library(caTools)
+library(ggplot2)
+library(GGally)
+library(rpart.plot)
+library(rattle)
+library(dplyr)
+library(nnet)
+```
+Importación del dataset
+```{r}
+datasetSA <- read.csv("./datasetSA.csv")
+```
